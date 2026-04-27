@@ -6,9 +6,16 @@
 This project evaluates whether machine learning models can effectively capture sentiment in financial language, which is often neutral and context-dependent.
 # Sentiment and Topic Analysis of Financial Headlines (R)
 
-## 📊 Example Output
+## 📊 Example Outputs
 
-![t-SNE Visualization](output/tsne_plot.png)
+### STM Topics
+![STM Topics](stm_top_topics.png)
+
+### Topic Selection Diagnostics
+![K Selection](stm_k_selection_diagnostics.png)
+
+### LDA Topics
+![LDA](lda_top_terms.png)
 
 ## 📌 Overview
 This project applies a comprehensive Natural Language Processing (NLP) pipeline to financial news headlines using the Financial PhraseBank dataset. The goal is to extract meaningful insights from financial text and evaluate the performance of different machine learning models in sentiment classification.
