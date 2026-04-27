@@ -1,6 +1,14 @@
+![R](https://img.shields.io/badge/Language-R-blue)
+![NLP](https://img.shields.io/badge/Focus-NLP-green)
+![Finance](https://img.shields.io/badge/Domain-Finance-orange)
+
 # financial-text-analysis-nlp
-Sentiment and topic analysis of financial headlines using NLP techniques in R (LDA, STM, GloVe, Random Forest, XGBoost)
+This project evaluates whether machine learning models can effectively capture sentiment in financial language, which is often neutral and context-dependent.
 # Sentiment and Topic Analysis of Financial Headlines (R)
+
+## 📊 Example Output
+
+![t-SNE Visualization](output/tsne_plot.png)
 
 ## 📌 Overview
 This project applies a comprehensive Natural Language Processing (NLP) pipeline to financial news headlines using the Financial PhraseBank dataset. The goal is to extract meaningful insights from financial text and evaluate the performance of different machine learning models in sentiment classification.
