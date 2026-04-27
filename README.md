@@ -22,7 +22,9 @@ This project applies a comprehensive Natural Language Processing (NLP) pipeline 
 
 The project combines both **unsupervised learning methods** (topic modeling and embeddings) and **supervised classification models** to analyze sentiment and structure in financial language.
 
----
+## 🔍 Research Question
+
+Do machine learning models systematically misclassify positive financial news as neutral, given the typically neutral and nuanced language of financial reporting?
 
 ## 🎯 Objectives
 - Identify dominant themes using **LDA** and **Structural Topic Modeling (STM)**
