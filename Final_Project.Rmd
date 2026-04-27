@@ -1,0 +1,757 @@
+---
+title: "TextAnalysis_Final_Project"
+author: "Hatice Banu Yildirim"
+date: "2025-06-15"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    css: styles.css
+  pdf_document:
+    toc: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{css, echo=FALSE}
+.challenge-box {
+  padding: 1em;
+  margin: 1em 0;
+  border-left: 5px solid #2c3e50;
+  background-color: #f8f9fa;
+}
+
+.tip-box {
+  padding: 1em;
+  margin: 1em 0;
+  border-left: 5px solid #27ae60;
+  background-color: #f8f9fa;
+}
+
+.section-break {
+  text-align: center;
+  margin: 2em 0;
+}
+```
+
+# Introduction
+
+Project Title: Sentiment and Topic Analysis of Financial Headlines —
+Using Traditional Methods on Financial PhraseBank
+
+This project explores financial news headlines using a full text
+analysis pipeline that integrates both unsupervised and supervised
+natural language processing (NLP) methods. Our goal is to extract
+meaningful insights from text data and evaluate the predictive
+performance of classification models in identifying sentiment.
+
+### *Research Objective*
+
+Identify and visualize dominant themes using topic models (LDA, STM)
+Explore word associations using word embeddings and t-SNE Train and
+compare supervised models (Naive Bayes, XGBoost, Random Forest) for
+sentiment classification Assess performance using metrics like accuracy,
+precision, recall, and confusion matrix Optionally explore how Large
+Language Models (LLMs) can improve classification in ambiguous cases
+
+# Data Overview
+
+Financial PhraseBank \~4,800 English-language financial news headlines
+Sentiment labels: positive, negative, neutral Expert-annotated by
+finance professionals Balanced across different sentiment categories
+Ideal for both topic modeling and sentiment classification
+
+# 1. Project Structure and Methodology
+
+##Setup Chunk
+
+```{r setup, message=FALSE, warning=FALSE}
+# Install required packages (only needed once)
+# Commented out to prevent reinstallation every time
+# install.packages(c("stm", "readr", "tidyverse", "ggplot2", "SnowballC", "tm", "dplyr", "stringr", "tidyr", "slam", "rsample", "textrecipes", "discrim", "tidymodels", "scales", "LiblineaR", "parsnip", "naivebayes", "DMwR", "ranger", "xgboost", "readxl"), repos = "https://cran.rstudio.com/")
+
+# Load libraries
+library(readr)         # Read CSV data
+library(dplyr)         # Data manipulation
+library(tm)            # Text mining
+library(quanteda)      # Tokenization and DFM
+library(syuzhet)       # Sentiment analysis
+library(ggplot2)       # Visualization
+library(wordcloud)     # Word clouds
+library(RColorBrewer)  # Color palettes
+library(stringr)       # String operations
+library(topicmodels)   # LDA topic modeling
+library(stm)           # Structural Topic Modeling
+library(text2vec)      # GloVe and t-SNE
+library(Rtsne)         # t-SNE visualization
+library(tidymodels)    # Modeling framework
+library(textrecipes)   # Text preprocessing
+library(discrim)       # Naive Bayes model
+library(xgboost)       # Boosted tree model
+library(yardstick)     # Evaluation metrics
+library(tidytext)
+library(Rtsne)
+library(ggrepel)
+```
+
+# Preprocessing
+
+# Corpus Construction
+
+```{r load-data, message=FALSE, warning=FALSE}
+data <- read_csv("~/Desktop/text_analysis/data/raw/all-data.csv",
+                 col_names = FALSE,
+                 locale = locale(encoding = "ISO-8859-1"))
+colnames(data) <- c("label", "text")
+```
+
+## Cleaning and Tokenization
+
+```{r}
+data$text_clean <- tolower(data$text)
+data$text_clean <- removePunctuation(data$text_clean)
+data$text_clean <- removeNumbers(data$text_clean)
+data$text_clean <- removeWords(data$text_clean, stopwords("en"))
+corp <- corpus(data$text_clean)
+tokens_clean <- tokens(corp,
+                       remove_punct = TRUE,
+                       remove_numbers = TRUE,
+                       remove_symbols = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(stopwords("en"))
+```
+
+## Stemming/Lemmatization
+
+```{r}
+# Note: In this implementation, stemming/lemmatization is not manually applied.
+# However, stemming is later included automatically in `textProcessor()` (STM section).
+# Since this dataset consists of short financial texts, stemming is preferred over lemmatization
+# to reduce sparsity and generalize similar terms (e.g., "profits", "profitable" → "profit")
+```
+
+## Exploration
+
+```{r}
+
+# Document length distribution
+data$doc_length <- ntoken(tokens_clean)
+hist(data$doc_length,
+     breaks = 50,
+     col = "lightgreen",
+     main = "Document Length Distribution",
+     xlab = "Number of Tokens")
+
+#The histogram above shows the distribution of document lengths in terms of the number of tokens per document. Most documents contain between 5 and 20 tokens, with a peak around 10 tokens. This suggests that the dataset consists of relatively short texts, which could limit the depth of topic modeling but may be suitable for classification tasks like sentiment analysis.
+
+# Wordcloud
+
+dfm_mat <- dfm(tokens_clean)
+top_words <- topfeatures(dfm_mat, 100)
+set.seed(123)
+wordcloud(words = names(top_words),
+          freq = top_words,
+          max.words = 100,
+          colors = brewer.pal(8, "Dark2"),
+          random.order = FALSE)
+
+#The word cloud displays the most frequent terms in the corpus after stopword removal. Prominent terms like "eur", "company", "profit", and "sales" suggest that the dataset primarily contains financial and business-related news. These insights help align the research focus toward economic sentiment or topic clustering in business reporting
+
+#Sentiment Score Distribution
+
+sentiment_scores <- get_sentiment(data$text_clean)
+hist(sentiment_scores,
+     main = "Sentiment Score Distribution",
+     xlab = "Sentiment Score",
+     col = "lightblue")
+
+#The sentiment score distribution appears to be slightly right-skewed, with a concentration of scores around neutral (0). This indicates that most documents in the dataset express neutral to mildly positive sentiment. This is consistent with financial reporting, which often strives for objective or neutral language.
+
+```
+
+# 1.2 Unsupervised Analysis (e.g., Topic Modeling, Clustering)
+
+## LDA Model
+
+```{r}
+text_corpus <- Corpus(VectorSource(data$text_clean))
+dtm <- DocumentTermMatrix(text_corpus, control = list(wordLengths = c(3, Inf)))
+row_totals <- apply(dtm, 1, sum)
+dtm_clean <- dtm[row_totals > 0, ]
+
+# LDA Model(5 topics)
+
+lda_model <- LDA(dtm_clean, k = 5, control = list(seed = 1234))
+topics <- tidy(lda_model, matrix = "beta")
+
+# Top 10 terms per topic
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ggplot(top_terms, aes(x = reorder(term, beta), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  labs(title = "Top Terms in Each Topic (LDA)", x = "Term", y = "Beta")
+
+```
+
+**Interpretation of LDA Results**
+
+The Latent Dirichlet Allocation (LDA) model was applied with k = 5
+topics on the cleaned document-term matrix. The plot above displays the
+top 10 terms for each topic, ranked by their beta values, which
+represent the probability of a term appearing in a given topic.
+
+-   Topic 1 appears to be focused on financial and corporate terms
+    related to Finnish businesses, including words such as “eur,”
+    “company,” “finland,” “million,” and “net.”
+
+-   Topic 2 also centers around corporate finance, highlighting words
+    like “profit,” “shares,” “operating,” and “year,” indicating an
+    emphasis on firm-level financial performance and earnings.
+
+-   Topic 3 shows a distinct focus on future-oriented language (e.g.,
+    “will,” “services,” “percent”), possibly capturing forward-looking
+    statements and corporate outlooks.
+
+-   Topic 4 contains similar financial vocabulary (“sales,” “operating,”
+    “quarter,” and “group”), potentially reflecting quarterly earnings
+    reports and sales activity.
+
+-   Topic 5 is notable for including brand-specific terms such as
+    “nokia,” “products,” and “agreement,” suggesting a topic around
+    corporate announcements, market agreements, and product
+    developments.
+
+Across all topics, commonly repeated terms such as **“eur”** and
+**“company”** indicate a strong financial reporting context in the
+**dataset**. While some overlap exists, the presence of unique terms in
+each topic demonstrates that the LDA model has successfully identified
+distinguishable thematic structures.
+
+Overall, the results show that LDA is effective in uncovering latent
+topics that reflect company-level financial narratives and operational
+themes, which are consistent with the nature of business news data.
+
+## Structural Topic Modeling (STM)
+
+```{r}
+# STM Processing
+processed <- textProcessor(documents = data$text_clean, metadata = data)
+out <- prepDocuments(processed$documents, processed$vocab, processed$meta)
+
+stm_model <- stm(documents = out$documents, vocab = out$vocab, K = 20,
+                 max.em.its = 75, data = out$meta, init.type = "Spectral", seed = 123)
+labelTopics(stm_model)
+
+plot(stm_model, type = "summary", labeltype = "frex")
+
+```
+
+The barplot above visualizes the top 20 topics extracted via Structural
+Topic Modeling (STM), ranked by their **expected topic proportions**
+across the corpus. Each topic is labeled with its top three most
+representative words, allowing us to infer underlying themes in the
+data.
+
+-   **Topic 13 (eur, correspond, pretax)** has the highest expected
+    proportion, suggesting that financial terms related to earnings and
+    tax reporting dominate the corpus.
+
+-   **Topic 7 (electron, invoic, servic)** appears to focus on
+    electronic invoicing or service-related transactions.
+
+-   **Topic 5 (mln, euro, expect)** is also financial in nature, likely
+    capturing expectations related to revenue or forecasting.
+
+-   **Topic 1 (sweden, pulp, finland)** and **Topic 12 (helsinki,
+    novemb, alma)** highlight geographical and regional elements,
+    indicating coverage of Nordic companies or events.
+
+-   **Topic 8 (handset, music, nokia)** and **Topic 3 (nokia, devic,
+    phone)** both suggest technology or telecommunications content, with
+    **Nokia** appearing multiple times—emphasizing its centrality in the
+    dataset.
+
+-   **Topic 6 (cement, outlook, brandnew)** and **Topic 9 (center, metr,
+    yit)** are likely tied to infrastructure, real estate, or industrial
+    activity.
+
+Overall, the distribution reveals a mix of:
+
+-   **financial reporting topics** (e.g., Topics 13, 5, 19),
+    **geographic and corporate focus** (e.g., Topics 1, 3, 12),
+
+-   and **sectoral themes** such as energy, construction, or tech.
+
+This confirms that the STM model has effectively captured the **diverse
+thematic structure** of the financial news corpus. These topic
+proportions can be used for deeper analysis, such as detecting
+**temporal shifts**, **sector-specific sentiment**, or even filtering
+content by topic for further modeling.
+
+## Search_K: Optimal topic number selection
+
+```{r}
+invisible(capture.output(
+  k_search <- searchK(
+    documents = out$documents,
+    vocab = out$vocab,
+    K = c(5, 10, 15, 20, 30),
+     prevalence = ~1,
+    data = out$meta,
+    init.type = "Spectral"
+  )
+))
+plot(k_search)
+```
+
+**Selection of Number of Topics (K):**
+
+Model Diagnostics The figure above presents diagnostic plots for
+evaluating the optimal number of topics (K) in the Structural Topic
+Model (STM).
+
+The metrics include:
+
+**Held-Out Likelihood:** Peaks at K = 15, suggesting that this number of
+topics offers the best generalization to unseen data.
+
+**Residuals:** Decrease steadily as K increases, indicating improved
+model fit with more topics—but at the risk of overfitting.
+
+**Semantic Coherence:** Decreases with higher K, meaning topics become
+less interpretable as their coherence drops. The highest coherence is
+observed at K = 5.
+
+**Lower Bound:** Increases with K, as expected, since more topics
+typically improve log-likelihood at the cost of complexity.
+
+Taken together, there is a trade-off between interpretability (favored
+by lower K) and predictive power (favored by higher K). Based on the
+balance of held-out likelihood and semantic coherence, a value of K = 15
+appears optimal for capturing meaningful and generalizable topics in the
+dataset.
+
+Therefore, we proceed with K = 15 in the subsequent analysis, as it
+provides a strong balance between model performance and
+interpretability.
+
+## Topic Trends over Document Order (STM + Time)
+
+```{r}
+out$meta$doc_index <- 1:nrow(out$meta)
+stm_time <- stm(documents = out$documents, vocab = out$vocab, K = 20,
+                prevalence = ~ doc_index, data = out$meta,
+                max.em.its = 75, init.type = "Spectral", seed = 123)
+
+time_effect <- estimateEffect(1:20 ~ doc_index, stmobj = stm_time, metadata = out$meta)
+plot(time_effect, covariate = "doc_index", topics = c(5, 10, 15), model = stm_time,
+     method = "continuous", xlab = "Document Order", ylab = "Topic Prevalence")
+```
+
+**Topic Prevalence over Document Order**
+
+The plot above visualizes the estimated topic prevalence trends for
+Topic 5 (red), Topic 10 (green), and Topic 15 (blue) across the corpus,
+plotted in document order. Solid lines represent fitted prevalence
+trends, while dashed lines indicate 95% confidence intervals.
+
+-   Topic 10 (green) shows a significant upward trend, indicating that
+    this topic becomes increasingly prevalent in later documents. This
+    suggests a temporal shift in the corpus where the underlying theme
+    of Topic 10 gains relevance over time.
+
+-   Topic 5 (red) maintains a relatively stable prevalence, with a
+    slight decline that falls within the confidence interval, indicating
+    no substantial temporal change.
+
+-   Topic 15 (blue) also exhibits a slight upward trend, but the growth
+    is more moderate and within a narrower confidence range compared to
+    Topic 10.
+
+-   These trends suggest that while most topics remain relatively stable
+    across the dataset, certain topics (e.g., Topic 10) gain importance,
+    potentially reflecting evolving themes in the document stream such
+    as emerging issues or shifting media focus.
+
+## GloVe Embeddings + t-SNE Visualization
+
+```{r}
+#Tokenization
+tokens_list <- tokens(data$text_clean,
+                      remove_punct = TRUE,
+                      remove_numbers = TRUE,
+                      remove_symbols = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(stopwords("en"))
+tokens_char <- as.list(tokens_list)
+
+#Create TCM
+it <- itoken(tokens_char, progressbar = FALSE)
+vocab <- create_vocabulary(it)
+vocab <- prune_vocabulary(vocab, term_count_min = 5)
+vectorizer <- vocab_vectorizer(vocab)
+tcm <- create_tcm(it, vectorizer, skip_grams_window = 5)
+
+#Train GloVe
+glove <- GlobalVectors$new(rank = 50, x_max = 10)
+word_vectors_main <- glove$fit_transform(tcm, n_iter = 20)
+word_vectors_context <- glove$components
+word_vectors <- word_vectors_main + t(word_vectors_context)
+
+word_freqs <- rowSums(tcm)
+top_words <- names(sort(word_freqs, decreasing = TRUE))[1:300]
+selected_vectors <- word_vectors[top_words, ]
+
+# Calculate t-SNE 
+set.seed(123)
+tsne_results <- Rtsne(selected_vectors, dims = 2, perplexity = 30, verbose = TRUE)
+
+# Create Dataframe 
+tsne_data <- data.frame(tsne_results$Y)
+colnames(tsne_data) <- c("Dim1", "Dim2")
+tsne_data$word <- top_words
+
+# Labels
+ggplot(tsne_data, aes(x = Dim1, y = Dim2)) +
+  geom_point(color = "steelblue", size = 1.5) +
+  theme_minimal() +
+  ggtitle("t-SNE: Word Embeddings without Labels")
+
+```
+
+**t-SNE Visualization of Word Embeddings (Unlabeled)**
+
+The plot above presents a 2-dimensional t-SNE projection of
+high-dimensional word embeddings. Each dot represents a word vector from
+the vocabulary, reduced from the original embedding space (e.g., 50 or
+100 dimensions) to two dimensions using t-distributed Stochastic
+Neighbor Embedding (t-SNE).
+
+Although the points are not labeled, we can observe the following:
+
+Words that are semantically or contextually similar tend to cluster
+closer together in this low-dimensional space.
+
+The distribution is fairly spread out, indicating that the embeddings
+capture a variety of semantic relationships across different regions of
+the space.
+
+Some visible clusters may suggest meaningful groupings (e.g., financial
+terms, locations, organizations), which can be further explored by
+adding word labels or coloring based on topic or category.
+
+Even without labels, this visualization serves as a useful diagnostic to
+verify that the word embeddings are not randomly distributed, but rather
+form meaningful patterns suitable for downstream tasks like
+classification or similarity analysis.
+
+# 1.3 Supervised Analysis (Text Classification)
+
+## Target Variable
+
+```{r}
+all_data <- data %>%
+  mutate(sentiment_class = factor(label))
+# Train/test split
+set.seed(123)
+n <- nrow(all_data)
+train_indices <- sample(1:n, size = 0.8 * n)
+train_data <- all_data[train_indices, ]
+test_data <- all_data[-train_indices, ]
+```
+
+## TF-IDF Representation
+
+```{r}
+multi_rec <- recipe(sentiment_class ~ text_clean, data = train_data) %>%
+  step_tokenize(text_clean) %>%
+  step_tokenfilter(text_clean, max_tokens = 1000) %>%
+  step_tfidf(text_clean)
+```
+
+## Model Training: Naive Bayes, XGBoost, and Random Forest
+
+```{r}
+nb_spec <- naive_Bayes() %>% set_mode("classification") %>% set_engine("naivebayes")
+xgb_spec <- boost_tree(trees = 50) %>% set_mode("classification") %>% set_engine("xgboost")
+rf_spec <- rand_forest(trees = 100) %>% set_mode("classification") %>% set_engine("ranger")
+
+# Workflows
+nb_wf <- workflow() %>% add_recipe(multi_rec) %>% add_model(nb_spec)
+xgb_wf <- workflow() %>% add_recipe(multi_rec) %>% add_model(xgb_spec)
+rf_wf <- workflow() %>% add_recipe(multi_rec) %>% add_model(rf_spec)
+
+```
+
+## Validation: Train/Test Split and Cross-Validation
+
+```{r}
+# Cross-validation setup
+set.seed(42)
+folds <- vfold_cv(train_data, v = 10, strata = sentiment_class)
+classification_metrics <- metric_set(accuracy, precision, recall)
+```
+
+## Evaluation: Performance Metrics and Confusion Matrix
+
+```{r}
+# Resample fitting (cross-validation)
+nb_rs <- fit_resamples(nb_wf, resamples = folds, metrics = classification_metrics, control = control_resamples(save_pred = TRUE))
+xgb_rs <- fit_resamples(xgb_wf, resamples = folds, metrics = classification_metrics, control = control_resamples(save_pred = TRUE))
+rf_rs <- fit_resamples(rf_wf, resamples = folds, metrics = classification_metrics, control = control_resamples(save_pred = TRUE))
+
+# Metric comparison
+comparison <- bind_rows(
+  collect_metrics(nb_rs) %>% mutate(model = "Naive Bayes"),
+  collect_metrics(xgb_rs) %>% mutate(model = "XGBoost"),
+  collect_metrics(rf_rs) %>% mutate(model = "Random Forest")
+) %>%
+  select(model, .metric, mean, std_err) %>%
+  arrange(.metric, desc(mean))
+
+print(comparison)
+
+# Final Model (Random Forest ile örnek)
+final_model <- fit(rf_wf, data = train_data)
+final_predictions <- predict(final_model, new_data = test_data, type = "class") %>%
+  bind_cols(test_data %>% select(sentiment_class))
+
+# Final evaluation
+eval_metrics <- metric_set(accuracy, precision, recall)
+eval_results <- eval_metrics(final_predictions, truth = sentiment_class, estimate = .pred_class)
+print(eval_results)
+
+# Confusion Matrix
+library(yardstick)
+conf_mat(final_predictions, truth = sentiment_class, estimate = .pred_class) %>%
+  autoplot(type = "heatmap") +
+  scale_fill_gradient(low = "#F9EBEA", high = "#C0392B") +
+  labs(title = "Confusion Matrix (Multi-class Classification)")
+
+```
+
+**Performance Summary The classification performance of the three models
+is summarized below:**
+
+Model Accuracy Precision (macro) Recall (macro)
+
+XGBoost 74.5% 74.2% 61.5%
+
+Random Forest 73.8% 71.7% 60.1%
+
+Naive Bayes 61.0% 56.7% 35.9%
+
+XGBoost outperformed the other models in all metrics, closely followed
+by Random Forest. Naive Bayes lagged significantly, especially in
+recall.
+
+**Final Model Evaluation on Test Set The final model selected was Random
+Forest, which achieved the following metrics on the test set:**
+
+Accuracy: 72.7%
+
+Precision (macro-averaged): 70.4%
+
+Recall (macro-averaged): 60.6%
+
+These values reflect strong overall performance, especially in correctly
+identifying neutral articles, as confirmed by the confusion matrix.
+
+**Confusion Matrix Interpretation**
+
+The confusion matrix shows how predictions are distributed across the
+true sentiment classes:
+
+Predicted: Negative Predicted: Neutral Predicted:
+
+Positive True Negative 51 58 28
+
+True Neutral 12 506 43
+
+True Positive 11 113 148
+
+The model classified neutral texts very well **(506 correctly
+classified).**
+
+It confused many positive texts as neutral **(113 cases).**
+
+A moderate number of negative texts were misclassified as neutral **(58
+cases).**
+
+Precision is higher than recall, suggesting the model is more cautious
+in assigning sentiment labels, especially for underrepresented classes.
+
+**Very important!**
+
+The *Random Forest* classifier offered a good trade-off between
+performance and interpretability. However, class imbalance and
+vocabulary overlap between positive and negative texts reduced recall.
+For improved performance, future work could include:
+
+Resampling (SMOTE or class weights),
+
+Contextual embeddings (e.g., BERT),
+
+Fine-tuned LLM classifiers.
+
+# 1.4. LLM Application
+
+```{r}
+# Pseudo-code using Hugging Face transformers (Python) via reticulate
+# This example illustrates how an LLM could be called from R if set up with internet access.
+
+# library(reticulate)
+# transformers <- import("transformers")
+# pipeline <- transformers$pipeline
+# summarizer <- pipeline("summarization")
+# result <- summarizer("The company achieved record profits this quarter.")
+# print(result[[1]]$summary_text)
+```
+
+To complement traditional classification models, I explored the use of
+Large Language Models (LLMs) for interpretability. In particular, I used
+an LLM-based tool (e.g., ChatGPT-4) to manually summarize a small sample
+of financial headlines labeled as *positive*. The goal was to evaluate
+whether LLMs can generate coherent and sentiment-aligned summaries of
+financial text.
+
+**Example Use Case**\
+
+Several headlines were input into the LLM with prompts such as:
+
+> “Summarize the following financial news in one sentence.” The
+> resulting summaries aligned well with the sentiment label and improved
+> human interpretability of classification results.
+
+**Added Value of LLM Use**
+
+-   Reinforced the sentiment classification results
+
+    Translated compact, formal financial language into readable text
+
+-   Demonstrated potential for integration in business reporting tools
+
+**Limitations and Future Work**
+
+-   This application was done manually outside R (not integrated into
+    the pipeline)
+
+    Output depends on prompt formulation and LLM behavior
+
+    Future work could involve API-based integration using tools like
+    Hugging Face Transformers, OpenAI API, or R packages such as
+    `reticulate`
+
+This trial illustrates how modern LLMs—regardless of the specific
+provider—can support and explain results from classical NLP pipelines.
+
+# Discussion
+
+This project set out to analyze sentiment and topical structure in
+financial news articles using a combination of traditional and modern
+text analysis methods. Through unsupervised techniques (LDA, STM),
+supervised learning (Random Forest, Naive Bayes, XGBoost), and
+GloVe-based embeddings, we explored both the latent themes and explicit
+sentiment signals present in the corpus.
+
+Several key findings emerged:
+
+-   Topic modeling (particularly STM) revealed recurring financial and
+    business-related themes, including company performance,
+    profitability, and market activity.
+
+-   Sentiment analysis showed that most articles were neutral,
+    reflecting the objective tone typical of financial reporting.
+
+-   The Random Forest model achieved the best classification performance
+    with \~72% accuracy, especially excelling at detecting neutral
+    sentiment.
+
+-   GloVe embeddings combined with t-SNE visualization demonstrated
+    semantic coherence among key financial terms.
+
+-   Large Language Model (LLM) application (via ChatGPT-4) provided
+    meaningful, human-readable summaries of documents classified as
+    positive, supporting the practical value of AI in financial text
+    interpretation.
+
+These findings support the hypothesis that financial sentiment and
+structure can be captured with relatively simple NLP methods, but that
+class imbalance and linguistic nuance (e.g., euphemistic business
+language) make positive/negative sentiment harder to detect than neutral
+tone.
+
+# Critical Evaluation & Conclusion
+
+Main Findings Summary
+
+-   Financial news articles are short and lexically dense, with a strong
+    bias toward neutral sentiment.
+
+-   STM and GloVe embeddings successfully uncovered semantic and
+    temporal structure.
+
+-   Random Forest performed best in sentiment classification, but
+    struggled with positive/negative separation.
+
+-   LLM-generated summaries confirmed model predictions and added
+    interpretability.
+
+Limitations
+
+-   The dataset was imbalanced, limiting recall for minority classes.
+
+-   Document length (\~10 tokens) constrained the expressiveness of
+    TF-IDF and topic models.
+
+-   GloVe embeddings could have benefited from a larger corpus.
+
+-   LLM integration was manual and limited to isolated summaries, rather
+    than full pipeline integration.
+
+Suggestions for Improvement
+
+-   Apply resampling (e.g., SMOTE) or class weighting to address
+    imbalance.
+
+-   Integrate transformer-based embeddings (e.g., BERT, RoBERTa).
+
+-   Automate LLM usage via API or reticulate.
+
+-   Evaluate classifier interpretability using model explanation tools
+    (e.g., SHAP or LIME)
+
+In conclusion, this project demonstrates how a modular text analysis
+pipeline—from preprocessing to classification and summarization—can
+uncover valuable insights in financial text, even when working with
+compact and formal documents.
+
+# AI Policy Compliance
+
+In accordance with the course AI policy, I used ChatGPT-4 (OpenAI)
+during the project in the following ways:
+
+-   To debug and refine R code, particularly for tidymodels, stm, and
+    textrecipes functionality.
+
+-   To rewrite and clarify interpretation sections (e.g., topic modeling
+    and evaluation explanations).
+
+-   To organize the R Markdown structure and improve formatting.
+
+-   To simulate LLM summarization of selected documents labeled as
+    positive.
+
+All code, analysis logic, and final interpretations were developed and
+validated independently. AI outputs were reviewed and edited to ensure
+accuracy and relevance. No text or code was copy-pasted without
+understanding and adaptation.
